@@ -3,7 +3,7 @@
 My super-cool project
 
 ## Team members
-NameA (GitHubUserA), NameB (GitHubUserB)
+Kylah Gunter (kylahgunter), Alesha Raihana (azraihana)
 
 ## Project description
 Max ½ page. 
