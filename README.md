@@ -1,12 +1,9 @@
 # BME450-project
 # Title
-My super-cool project
+Deep Learning Classificaton of Pneumonia from Chest X-ray Images 
 
 ## Team members
 Kylah Gunter (kylahgunter), Alesha Raihana (azraihana)
 
 ## Project description
-Max ½ page. 
-Include some information on: 
-* what dataset you plan to use
-* goal of the project
+
