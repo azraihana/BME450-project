@@ -1,0 +1,416 @@
+# IMPORTS
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torchvision import datasets, transforms, models
+from torchvision.models import MobileNet_V2_Weights
+from torch.utils.data import DataLoader, Subset
+
+#  DATASET PATH
+DATA_DIR = r"C:\Users\alesh\Downloads\Dataset\chest_xray"
+
+# TRANSFORMS
+train_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
+    transforms.ToTensor()
+])
+
+test_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor()
+])
+
+# LOAD TRAIN, VAL, TEST DATA
+train_data = datasets.ImageFolder(DATA_DIR + "/train", transform=train_transform)
+val_data = datasets.ImageFolder(DATA_DIR + "/val", transform=test_transform)
+test_data = datasets.ImageFolder(DATA_DIR + "/test", transform=test_transform)
+
+print("Classes:", train_data.classes)
+print("Train size:", len(train_data))
+print("Validation size:", len(val_data))
+print("Test size:", len(test_data))
+
+
+# BALANCED TRAINING SUBSET
+normal_indices = [i for i, (_, label) in enumerate(train_data.samples) if label == 0]
+pneumonia_indices = [i for i, (_, label) in enumerate(train_data.samples) if label == 1]
+
+balanced_indices = normal_indices[:1000] + pneumonia_indices[:1000]
+
+train_subset = Subset(train_data, balanced_indices)
+
+train_loader = DataLoader(train_subset, batch_size=32, shuffle=True)
+val_loader = DataLoader(val_data, batch_size=32, shuffle=False)
+test_loader = DataLoader(test_data, batch_size=32, shuffle=False)
+
+
+#  CNN MODEL
+class ImprovedCNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.model = nn.Sequential(
+            nn.Conv2d(3, 16, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(16, 32, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            nn.Flatten(),
+            nn.Linear(64 * 28 * 28, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, 2)
+        )
+
+    def forward(self, x):
+        return self.model(x)
+
+# TRAIN CNN
+model = ImprovedCNN()
+
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.0001)
+
+for epoch in range(5):
+    model.train()
+    correct = 0
+    total = 0
+    total_loss = 0
+
+    for images, labels in train_loader:
+        outputs = model(images)
+        loss = criterion(outputs, labels)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+
+        _, predicted = torch.max(outputs, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+    train_acc = 100 * correct / total
+    avg_loss = total_loss / len(train_loader)
+
+    print(f"Epoch {epoch+1}: Loss = {avg_loss:.4f}, Train Accuracy = {train_acc:.2f}%")
+
+
+# VALIDATION ACCURACY
+model.eval()
+
+correct = 0
+total = 0
+
+with torch.no_grad():
+    for images, labels in val_loader:
+        outputs = model(images)
+        _, predicted = torch.max(outputs, 1)
+
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+val_acc = 100 * correct / total
+print("CNN Validation Accuracy:", val_acc)
+
+# TEST CNN
+model.eval()
+
+correct = 0
+total = 0
+
+with torch.no_grad():
+    for images, labels in test_loader:
+        outputs = model(images)
+        _, predicted = torch.max(outputs, 1)
+
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+cnn_test_acc = 100 * correct / total
+print("CNN Test Accuracy:", cnn_test_acc)
+
+import matplotlib.pyplot as plt
+
+classes = test_data.classes
+
+model.eval()
+
+images_shown = 0
+
+plt.figure(figsize=(12, 6))
+
+with torch.no_grad():
+    for images, labels in test_loader:
+        outputs = model(images)
+        _, predicted = torch.max(outputs, 1)
+
+        for i in range(len(images)):
+            img = images[i].permute(1, 2, 0)  # C,H,W â†’ H,W,C
+            actual = classes[labels[i].item()]
+            pred = classes[predicted[i].item()]
+
+            correct = actual == pred
+            color = "green" if correct else "red"
+
+            plt.subplot(2, 5, images_shown + 1)
+            plt.imshow(img)
+            plt.title(f"A:{actual}\nP:{pred}", color=color)
+            plt.axis("off")
+
+            images_shown += 1
+
+            if images_shown == 10:
+                break
+        if images_shown == 10:
+            break
+
+plt.tight_layout()
+plt.show()
+
+classes = test_data.classes  # ['NORMAL', 'PNEUMONIA']
+
+correct_per_class = [0, 0]
+total_per_class = [0, 0]
+
+model.eval()
+
+with torch.no_grad():
+    for images, labels in test_loader:
+        outputs = model(images)
+        _, predicted = torch.max(outputs, 1)
+
+        for i in range(len(labels)):
+            label = labels[i].item()
+            pred = predicted[i].item()
+
+            total_per_class[label] += 1
+            if label == pred:
+                correct_per_class[label] += 1
+
+for i in range(len(classes)):
+    acc = 100 * correct_per_class[i] / total_per_class[i]
+    print(f"{classes[i]} Accuracy: {acc:.2f}%")
+
+
+# CNN PREDICTED VS ACTUAL
+classes = test_data.classes
+
+print("\nCNN Sample Predictions:\n")
+
+with torch.no_grad():
+    for images, labels in test_loader:
+        outputs = model(images)
+        _, predicted = torch.max(outputs, 1)
+
+        for i in range(10):
+            actual = classes[labels[i].item()]
+            pred = classes[predicted[i].item()]
+            print(f"Actual: {actual} | Predicted: {pred}")
+
+        break
+
+# MOBILENET TRANSFORMS
+mobilenet_train_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
+    )
+])
+
+mobilenet_test_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
+    )
+])
+
+# LOAD MOBILENET DATA
+train_data_m = datasets.ImageFolder(DATA_DIR + "/train", transform=mobilenet_train_transform)
+val_data_m = datasets.ImageFolder(DATA_DIR + "/val", transform=mobilenet_test_transform)
+test_data_m = datasets.ImageFolder(DATA_DIR + "/test", transform=mobilenet_test_transform)
+
+normal_indices_m = [i for i, (_, label) in enumerate(train_data_m.samples) if label == 0]
+pneumonia_indices_m = [i for i, (_, label) in enumerate(train_data_m.samples) if label == 1]
+
+balanced_indices_m = normal_indices_m[:1000] + pneumonia_indices_m[:1000]
+
+train_subset_m = Subset(train_data_m, balanced_indices_m)
+
+train_loader_m = DataLoader(train_subset_m, batch_size=32, shuffle=True)
+val_loader_m = DataLoader(val_data_m, batch_size=32, shuffle=False)
+test_loader_m = DataLoader(test_data_m, batch_size=32, shuffle=False)
+
+# MOBILENET MODEL
+model_m = models.mobilenet_v2(weights=MobileNet_V2_Weights.DEFAULT)
+
+for param in model_m.features.parameters():
+    param.requires_grad = False
+
+model_m.classifier[1] = nn.Linear(model_m.last_channel, 2)
+
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model_m.classifier.parameters(), lr=0.0001)
+
+# TRAIN MOBILENET
+for epoch in range(5):
+    model_m.train()
+    correct = 0
+    total = 0
+    total_loss = 0
+
+    for images, labels in train_loader_m:
+        outputs = model_m(images)
+        loss = criterion(outputs, labels)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+
+        _, predicted = torch.max(outputs, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+    train_acc = 100 * correct / total
+    avg_loss = total_loss / len(train_loader_m)
+
+    print(f"Epoch {epoch+1}: Loss = {avg_loss:.4f}, Train Accuracy = {train_acc:.2f}%")
+
+# VALIDATION MOBILENET
+model_m.eval()
+
+correct = 0
+total = 0
+
+with torch.no_grad():
+    for images, labels in val_loader_m:
+        outputs = model_m(images)
+        _, predicted = torch.max(outputs, 1)
+
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+mobilenet_val_acc = 100 * correct / total
+print("MobileNet Validation Accuracy:", mobilenet_val_acc)
+
+# TEST MOBILENET
+model_m.eval()
+
+correct = 0
+total = 0
+
+with torch.no_grad():
+    for images, labels in test_loader_m:
+        outputs = model_m(images)
+        _, predicted = torch.max(outputs, 1)
+
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+mobilenet_test_acc = 100 * correct / total
+print("MobileNet Test Accuracy:", mobilenet_test_acc)
+
+import matplotlib.pyplot as plt
+
+classes = test_data_m.classes
+
+# Unnormalize function
+def unnormalize(img):
+    img = img.numpy().transpose(1, 2, 0)
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    img = std * img + mean
+    img = img.clip(0, 1)
+    return img
+
+model_m.eval()
+
+images_shown = 0
+
+plt.figure(figsize=(12, 6))
+
+with torch.no_grad():
+    for images, labels in test_loader_m:
+        outputs = model_m(images)
+        _, predicted = torch.max(outputs, 1)
+
+        for i in range(len(images)):
+            img = unnormalize(images[i].cpu())
+            actual = classes[labels[i].item()]
+            pred = classes[predicted[i].item()]
+
+            correct = actual == pred
+            color = "green" if correct else "red"
+
+            plt.subplot(2, 5, images_shown + 1)
+            plt.imshow(img)
+            plt.title(f"A:{actual}\nP:{pred}", color=color)
+            plt.axis("off")
+
+            images_shown += 1
+
+            if images_shown == 10:
+                break
+        if images_shown == 10:
+            break
+
+plt.tight_layout()
+plt.show()
+
+# MOBILENET PREDICTED VS ACTUAL
+classes = test_data_m.classes
+
+print("\nMobileNet Sample Predictions:\n")
+
+with torch.no_grad():
+    for images, labels in test_loader_m:
+        outputs = model_m(images)
+        _, predicted = torch.max(outputs, 1)
+
+        for i in range(10):
+            actual = classes[labels[i].item()]
+            pred = classes[predicted[i].item()]
+            print(f"Actual: {actual} | Predicted: {pred}")
+
+        break
+classes = test_data_m.classes
+
+correct_per_class = [0, 0]
+total_per_class = [0, 0]
+
+model_m.eval()
+
+with torch.no_grad():
+    for images, labels in test_loader_m:
+        outputs = model_m(images)
+        _, predicted = torch.max(outputs, 1)
+
+        for i in range(len(labels)):
+            label = labels[i].item()
+            pred = predicted[i].item()
+
+            total_per_class[label] += 1
+            if label == pred:
+                correct_per_class[label] += 1
+
+for i in range(len(classes)):
+    acc = 100 * correct_per_class[i] / total_per_class[i]
+    print(f"{classes[i]} Accuracy: {acc:.2f}%")
